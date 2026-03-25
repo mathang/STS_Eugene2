@@ -734,22 +734,31 @@ async function analyzeSTS() {
   const aboveLo = env.map(v => v > thrLo);
 
   // --- Improved "end of test" segment detection (2s window with 75% below the threshold) ---
+  const minStartTimeMs = 5000;
   let segs = [], inSeg = false, start = 0;
   const belowWindow = Math.floor(2.0 * fs);
   const requiredFraction = 0.75;
   for (let i = 0; i < env.length; i++) {
-    if (aboveLo[i] && !inSeg) { start = i; inSeg = true; }
+    if (aboveLo[i] && !inSeg) {
+      // Discard candidate starts that happen within the first 5 seconds.
+      if (timestamps[i] < minStartTimeMs) continue;
+      start = i;
+      inSeg = true;
+    }
     else if (!aboveLo[i] && inSeg) {
       const ahead = env.slice(i, i+belowWindow);
       if (ahead.length < belowWindow) continue;
       const belowFraction = ahead.filter(v => v < thrLo).length / ahead.length;
       if (belowFraction >= requiredFraction) {
-        if (aboveHi.slice(start,i).some(Boolean)) segs.push([start,i]);
+        // Remove the below-threshold confirmation period from analysis by
+        // ending the segment where that 2s confirmation window begins.
+        const trimmedEnd = Math.max(start, i - 1);
+        if (aboveHi.slice(start, trimmedEnd + 1).some(Boolean)) segs.push([start, trimmedEnd]);
         inSeg = false;
       }
     }
   }
-  if (inSeg) segs.push([start, env.length-1]);
+  if (inSeg && aboveHi.slice(start, env.length).some(Boolean)) segs.push([start, env.length-1]);
   if (segs.length === 0) return showMessage('No STS detected', true);
 
   // --- Select strongest segment ---
